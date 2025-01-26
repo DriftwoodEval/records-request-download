@@ -22,7 +22,7 @@ jobs:
       - name: Build .exe
         run: |
           .venv\Scripts\Activate.ps1
-          pyinstaller --noconfirm --clean --name "RecordsRequestDownload" main.py
+          pyinstaller --noconfirm --clean --name "RecordsRequestDownload" records-request.py
 
       - name: Compress archive
         run: Compress-Archive -Path dist/RecordsRequestDownload -DestinationPath dist/RecordsRequestDownload.zip
