@@ -9,3 +9,8 @@ dependencies = [
     "pyyaml>=6.0.2",
     "selenium>=4.28.1",
 ]
+
+[dependency-groups]
+dev = [
+    "pyinstaller>=6.11.1",
+]
