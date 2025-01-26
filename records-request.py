@@ -18,7 +18,7 @@ with open("info.yml", "r") as file:
 def initialize():
     driver = webdriver.Chrome()
     actions = ActionChains(driver)
-    driver.implicitly_wait(10)
+    driver.implicitly_wait(5)
     return driver, actions
 
 
@@ -146,24 +146,33 @@ def download(driver, actions, first, last):
     return True
 
 
+def write_file(filename, data):
+    data = data.strip("\n")
+    empty = False
+    with open(filename, "r") as file:
+        body = file.read().strip("\n")
+        print(body)
+        if body == "":
+            empty = True
+        with open(filename, "w") as file:
+            file.write(data if empty else f"{body}, {data}")
+
+
 def main():
     driver, actions = initialize()
     login_ta(driver, actions)
-    with open("pendingrecords.txt", "r") as file:
-        appointments = file.read().split(",")
+    with open("records.txt", "r") as file:
+        appointments = file.read().split(", ")
+    with open("records.txt", "w") as file:
+        file.write("")
     for appointment in appointments:
-        names = appointment.split(" ")
-        firstname = names[0]
-        lastname = names[1]
+        client = appointment.split(" ")
+        firstname = client[0]
+        lastname = client[1]
         if not download(driver, actions, firstname, lastname):
-            empty = False
-            with open("recordfailures.txt", "r") as file:
-                if file.read() == "":
-                    empty = True
-            with open("recordfailures.txt", "a") as file:
-                file.write(
-                    f"{firstname} {lastname}" if empty else f", {firstname} {lastname}"
-                )
+            write_file("recordfailures.txt", appointment)
+        else:
+            write_file("savedrecords.txt", appointment)
 
 
 main()
