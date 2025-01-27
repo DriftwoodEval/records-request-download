@@ -18,7 +18,7 @@ with open("info.yml", "r") as file:
 def initialize():
     driver = webdriver.Chrome()
     actions = ActionChains(driver)
-    driver.implicitly_wait(5)
+    driver.implicitly_wait(10)
     return driver, actions
 
 
@@ -114,7 +114,7 @@ def go_docs(driver, actions, client):
     print_options.orientation = "portrait"
     pdf = driver.print_page(print_options)
     with open(
-        f"TA Files/{client['firstname']} {client['lastname']} {month}{day}{year} Receiving.pdf",
+        f"School Records Requests/{client['firstname']} {client['lastname']} {month}{day}{year} Receiving.pdf",
         "wb",
     ) as file:
         decoded = b64decode(pdf, validate=True)
@@ -129,7 +129,7 @@ def go_docs(driver, actions, client):
     print_options.orientation = "portrait"
     pdf = driver.print_page(print_options)
     with open(
-        f"TA Files/{client['firstname']} {client['lastname']} {month}{day}{year} Sending.pdf",
+        f"School Records Requests/{client['firstname']} {client['lastname']} {month}{day}{year} Sending.pdf",
         "wb",
     ) as file:
         decoded = b64decode(pdf, validate=True)
