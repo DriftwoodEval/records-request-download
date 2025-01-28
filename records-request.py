@@ -151,7 +151,6 @@ def write_file(filename, data):
     empty = False
     with open(filename, "r") as file:
         body = file.read().strip("\n")
-        print(body)
         if body == "":
             empty = True
         with open(filename, "w") as file:
