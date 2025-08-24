@@ -9,4 +9,7 @@ wheels/
 # Virtual environments
 .venv
 
-info.yml
+# data
+*.yml
+*.txt
+School Records Requests/

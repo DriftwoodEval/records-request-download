@@ -1,177 +1,308 @@
 from base64 import b64decode
-from datetime import datetime
-from time import sleep, strftime, strptime
+from pathlib import Path
 
 import yaml
-from dateutil.relativedelta import relativedelta
+from loguru import logger
+from nameparser import HumanName
 from selenium import webdriver
-from selenium.common.exceptions import NoSuchElementException
-from selenium.webdriver.common.action_chains import ActionChains
+from selenium.common.exceptions import NoSuchElementException, TimeoutException
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.webdriver import WebDriver
 from selenium.webdriver.common.by import By
-from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.common.print_page_options import PrintOptions
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.support.ui import WebDriverWait
 
-with open("info.yml", "r") as file:
-    info = yaml.safe_load(file)["services"]
-
-
-def initialize():
-    driver = webdriver.Chrome()
-    actions = ActionChains(driver)
-    driver.implicitly_wait(10)
-    return driver, actions
-
-
-def login_ta(driver, actions):
-    driver.get("https://portal.therapyappointment.com")
-    driver.maximize_window()
-    actions.send_keys(info["therapyappointment"]["username"])
-    actions.send_keys(Keys.TAB)
-    actions.send_keys(info["therapyappointment"]["password"])
-    actions.send_keys(Keys.ENTER)
-    actions.perform()
+CONFIG_FILE = "info.yml"
+SOURCE_FILE = "records.txt"
+SUCCESS_FILE = "savedrecords.txt"
+FAILURE_FILE = "recordfailures.txt"
+OUTPUT_DIR = Path("School Records Requests")
+WAIT_TIMEOUT = 15  # seconds
 
 
-def go_to_client(firstname, lastname, driver, actions):
-    clients_button = driver.find_element(
-        By.XPATH, value="//*[contains(text(), 'Clients')]"
-    )
-    clients_button.click()
-
-    sleep(2)
-
-    actions.send_keys(Keys.ESCAPE)
-    actions.perform()
-
-    firstname_label = driver.find_element(By.XPATH, "//label[text()='First Name']")
-    firstname_field = firstname_label.find_element(
-        By.XPATH, "./following-sibling::input"
-    )
-    firstname_field.send_keys(firstname)
-
-    lastname_label = driver.find_element(By.XPATH, "//label[text()='Last Name']")
-    lastname_field = lastname_label.find_element(By.XPATH, "./following-sibling::input")
-    lastname_field.send_keys(lastname)
-
-    search_button = driver.find_element(By.CSS_SELECTOR, "button[aria-label='Search'")
-    search_button.click()
-
+def load_config(file_path: str) -> dict:
+    """Loads configuration from a YAML file."""
     try:
-        driver.find_element(
-            By.CSS_SELECTOR, "a[aria-description*='Press Enter to view the profile of"
-        ).click()
-    except NoSuchElementException:
-        return "No client found"
+        with open(file_path, "r") as file:
+            return yaml.safe_load(file)["services"]
+    except FileNotFoundError:
+        logger.error(f"Config file not found: {file_path}")
+        return {}
+    except KeyError:
+        logger.error(f"Missing 'services' key in config file: {file_path}")
+        return {}
 
 
-def extract_client_data(driver):
-    name = driver.find_element(By.CLASS_NAME, "text-h4").text
-    firstname = name.split(" ")[0]
-    lastname = name.split(" ")[-1]
-    account_number_element = driver.find_element(
-        By.XPATH, "//div[contains(normalize-space(text()), 'Account #')]"
-    ).text
-    account_number = account_number_element.split(" ")[-1]
-    birthdate_element = driver.find_element(
-        By.XPATH, "//div[contains(normalize-space(text()), 'DOB ')]"
-    ).text
-    birthdate_str = birthdate_element.split(" ")[-1]
-    birthdate = strftime("%Y/%m/%d", strptime(birthdate_str, "%m/%d/%Y"))
-    gender_title_element = driver.find_element(
-        By.XPATH,
-        "//div[contains(normalize-space(text()), 'Gender') and contains(@class, 'v-list-item__title')]",
-    )
-    gender_element = gender_title_element.find_element(
-        By.XPATH, "following-sibling::div"
-    )
-    sleep(0.5)
-    gender = gender_element.text.split(" ")[0]
-
-    age = relativedelta(datetime.now(), datetime.strptime(birthdate, "%Y/%m/%d")).years
-    return {
-        "firstname": firstname,
-        "lastname": lastname,
-        "account_number": account_number,
-        "birthdate": birthdate,
-        "gender": gender,
-        "age": age,
-    }
+def load_previous_csv(filepath: Path) -> set:
+    """Reads a comma-separated file and returns a set of its items."""
+    if not filepath.exists():
+        return set()
+    with open(filepath, "r") as file:
+        content = file.read().strip()
+        if not content:
+            return set()
+        # Split by comma and space, and strip extra whitespace from each item
+        return {item.strip() for item in content.split(",") if item.strip()}
 
 
-def go_docs(driver, actions, client):
-    dob = client["birthdate"].split("/")
-    year = dob[0]
-    month = dob[1]
-    day = dob[2]
-    docs_button = driver.find_element(By.LINK_TEXT, "Docs & Forms")
-    docs_button.click()
-    receiving_consent = driver.find_element(
-        By.LINK_TEXT, "Receiving Consent to Release of Information"
-    )
-    receiving_consent.click()
-    sleep(5)
-    print_options = PrintOptions()
-    print_options.orientation = "portrait"
-    pdf = driver.print_page(print_options)
-    with open(
-        f"School Records Requests/{client['firstname']} {client['lastname']} {month}{day}{year} Receiving.pdf",
-        "wb",
-    ) as file:
-        decoded = b64decode(pdf, validate=True)
-        file.write(decoded)
-    driver.back()
-    sending_consent = driver.find_element(
-        By.LINK_TEXT, "Sending Consent to Release of Information"
-    )
-    sending_consent.click()
-    sleep(5)
-    print_options = PrintOptions()
-    print_options.orientation = "portrait"
-    pdf = driver.print_page(print_options)
-    with open(
-        f"School Records Requests/{client['firstname']} {client['lastname']} {month}{day}{year} Sending.pdf",
-        "wb",
-    ) as file:
-        decoded = b64decode(pdf, validate=True)
-        file.write(decoded)
-    tab_open = driver.find_element(By.CSS_SELECTOR, ".mdi-chevron-double-right")
-    tab_open.click()
+def append_to_csv_file(filepath: Path, data: str):
+    """Appends data to a comma-separated file, handling separators correctly."""
+    prefix = ""
+    # Add a separator only if the file already exists and is not empty
+    if filepath.exists() and filepath.stat().st_size > 0:
+        prefix = ", "
+
+    with open(filepath, "a") as f:
+        f.write(f"{prefix}{data}")
 
 
-def download(driver, actions, first, last):
-    if go_to_client(first, last, driver, actions) == "No client found":
-        return False
-    client = extract_client_data(driver)
-    go_docs(driver, actions, client)
-    return True
+class TherapyAppointmentBot:
+    """A bot to automate downloading client documents from TherapyAppointment."""
 
+    def __init__(self, config: dict):
+        self.config = config["therapyappointment"]
+        self.driver = self._initialize_driver()
+        self.wait = WebDriverWait(self.driver, WAIT_TIMEOUT)
 
-def write_file(filename, data):
-    data = data.strip("\n")
-    empty = False
-    with open(filename, "r") as file:
-        body = file.read().strip("\n")
-        if body == "":
-            empty = True
-        with open(filename, "w") as file:
-            file.write(data if empty else f"{body}, {data}")
+    def _initialize_driver(self) -> WebDriver:
+        """Initializes the Chrome WebDriver."""
+        chrome_options = Options()
+        driver = webdriver.Chrome(options=chrome_options)
+        return driver
+
+    def __enter__(self):
+        """Allows using the bot as a context manager."""
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Ensures the driver is closed properly on exit."""
+        logger.info("Closing WebDriver.")
+        if self.driver:
+            self.driver.quit()
+
+    def login(self):
+        """Logs into the TherapyAppointment portal."""
+        logger.info("Logging into TherapyAppointment...")
+        self.driver.get("https://portal.therapyappointment.com")
+        self.driver.maximize_window()
+
+        username_field = self.wait.until(
+            EC.presence_of_element_located((By.NAME, "user_username"))
+        )
+        username_field.send_keys(self.config["username"])
+
+        password_field = self.driver.find_element(By.NAME, "user_password")
+        password_field.send_keys(self.config["password"])
+        password_field.submit()
+        logger.success("Login successful.")
+
+    def go_to_client(self, first_name: str, last_name: str) -> bool:
+        """Navigates to a specific client in TherapyAppointment."""
+        logger.info(f"Searching for client: {first_name} {last_name}...")
+        try:
+            # Wait for the main navigation to be clickable
+            clients_button = self.wait.until(
+                EC.element_to_be_clickable(
+                    (By.XPATH, "//*[contains(text(), 'Clients')]")
+                )
+            )
+            clients_button.click()
+
+            # Wait for the search form to be ready
+            firstname_field = self.wait.until(
+                EC.visibility_of_element_located(
+                    (By.XPATH, "//label[text()='First Name']/following-sibling::input")
+                )
+            )
+            firstname_field.send_keys(first_name)
+
+            lastname_field = self.driver.find_element(
+                By.XPATH, "//label[text()='Last Name']/following-sibling::input"
+            )
+            lastname_field.send_keys(last_name)
+
+            search_button = self.driver.find_element(
+                By.CSS_SELECTOR, "button[aria-label='Search']"
+            )
+            search_button.click()
+
+            # Wait for the search result link and click it
+            client_link = self.wait.until(
+                EC.element_to_be_clickable(
+                    (
+                        By.CSS_SELECTOR,
+                        "a[aria-description*='Press Enter to view the profile of']",
+                    )
+                )
+            )
+            client_link.click()
+            return True
+        except TimeoutException:
+            logger.warning(
+                f"Client not found or search failed for: {first_name} {last_name}"
+            )
+            return False
+        except NoSuchElementException:
+            logger.warning(
+                f"Could not find a search element for: {first_name} {last_name}"
+            )
+            return False
+
+    def extract_client_data(self) -> dict:
+        """Extracts and returns client data from their TherapyAppointment page."""
+        logger.info("Extracting client data...")
+        # Wait for the name to ensure the page is loaded
+        name_element = self.wait.until(
+            EC.visibility_of_element_located((By.CLASS_NAME, "text-h4"))
+        )
+        name = HumanName(name_element.text)
+
+        birthdate = (
+            self.driver.find_element(
+                By.XPATH, "//div[contains(normalize-space(text()), 'DOB ')]"
+            )
+            .text.split()[-1]
+            .replace("/", "")
+        )
+
+        keepcharacters = (" ", ".", "_")
+        safe_fullname = "".join(
+            c for c in f"{name.first} {name.last}" if c.isalnum() or c in keepcharacters
+        ).rstrip()
+
+        data = {
+            "fullname": safe_fullname,
+            "birthdate": birthdate,
+        }
+        logger.info(f"Client data extracted: {data}")
+        return data
+
+    def download_consent_forms(self, client_data: dict):
+        """Navigates to Docs & Forms and saves consent forms as PDFs."""
+        logger.info("Navigating to Docs & Forms...")
+        OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+        self._save_document_as_pdf(
+            "Receiving Consent to Release of Information", client_data
+        )
+        self._save_document_as_pdf(
+            "Sending Consent to Release of Information", client_data
+        )
+
+        clients_button = self.driver.find_element(
+            By.XPATH, "//*[contains(text(), 'Clients')]"
+        )
+        clients_button.click()
+
+    def _save_document_as_pdf(self, link_text: str, client: dict):
+        """Helper function to find, print, and save a single document."""
+        logger.info(f"Opening {link_text}...")
+        try:
+            docs_button = self.wait.until(
+                EC.element_to_be_clickable((By.LINK_TEXT, "Docs & Forms"))
+            )
+            docs_button.click()
+
+            document_link = self.wait.until(
+                EC.element_to_be_clickable((By.LINK_TEXT, link_text))
+            )
+            document_link.click()
+
+            self.wait.until(
+                EC.visibility_of_element_located(
+                    (By.XPATH, "//*[contains(text(), 'I authorize')]")
+                )
+            )
+
+            doc_type = link_text.split(" ")[0]
+
+            filename = (
+                OUTPUT_DIR
+                / f"{client['fullname']} {client['birthdate']} {doc_type}.pdf"
+            )
+
+            logger.info(f"Saving {filename}...")
+            pdf_options = PrintOptions()
+            pdf_options.orientation = "portrait"
+
+            pdf_base64 = self.driver.print_page(pdf_options)
+            with open(filename, "wb") as file:
+                file.write(b64decode(pdf_base64))
+
+            if filename.exists():
+                logger.success(f"Saved {filename}")
+
+        except TimeoutException:
+            logger.error(f"Could not find or load document: {link_text}")
+        finally:
+            # Go back to the Docs & Forms list
+            self.driver.back()
 
 
 def main():
-    driver, actions = initialize()
-    login_ta(driver, actions)
-    with open("records.txt", "r") as file:
-        appointments = file.read().split(", ")
-    with open("records.txt", "w") as file:
-        file.write("")
-    for appointment in appointments:
-        client = appointment.split(" ")
-        firstname = client[0]
-        lastname = client[1]
-        if not download(driver, actions, firstname, lastname):
-            write_file("recordfailures.txt", appointment)
-        else:
-            write_file("savedrecords.txt", appointment)
+    """Main function to run the automation script."""
+    config = load_config(CONFIG_FILE)
+
+    successful_clients = load_previous_csv(Path(SUCCESS_FILE))
+    failed_clients = load_previous_csv(Path(FAILURE_FILE))
+    already_processed = successful_clients.union(failed_clients)
+    logger.info(f"Loaded {len(already_processed)} previously processed clients.")
+
+    try:
+        with open(SOURCE_FILE, "r") as file:
+            content = file.read().strip()
+            clients_to_process = {
+                item.strip() for item in content.split(",") if item.strip()
+            }
+    except FileNotFoundError:
+        logger.error(f"Source file not found: {SOURCE_FILE}")
+        return
+
+    new_clients = clients_to_process - already_processed
+    if not new_clients:
+        logger.info("No new clients to process.")
+        return
+
+    logger.info(f"Found {len(new_clients)} new clients to process.")
+
+    new_success_count = 0
+    new_failure_count = 0
+
+    with TherapyAppointmentBot(config) as bot:
+        bot.login()
+        for client_name in new_clients:
+            try:
+                first, last = client_name.split()
+            except ValueError:
+                logger.warning(f"Skipping malformed name: '{client_name}'")
+                append_to_csv_file(Path(FAILURE_FILE), client_name)
+                new_failure_count += 1
+                continue
+
+            if bot.go_to_client(first, last):
+                try:
+                    client_data = bot.extract_client_data()
+                    bot.download_consent_forms(client_data)
+                    append_to_csv_file(Path(SUCCESS_FILE), client_name)
+                    new_success_count += 1
+                except Exception as e:
+                    logger.error(
+                        f"An error occurred while processing {client_name}: {e}"
+                    )
+                    append_to_csv_file(Path(FAILURE_FILE), client_name)
+                    new_failure_count += 1
+            else:
+                append_to_csv_file(Path(FAILURE_FILE), client_name)
+                new_failure_count += 1
+
+    with open(SOURCE_FILE, "w") as f:
+        f.truncate(0)
+
+    logger.info(
+        f"Process complete. Success: {new_success_count}, Failed: {new_failure_count}"
+    )
 
 
-main()
+if __name__ == "__main__":
+    main()
